@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -7,6 +8,7 @@ from scipy.optimize import minimize
 
 torch.manual_seed(0)
 np.random.seed(0)
+
 
 # ============================================================
 # True 4D Rosenbrock
@@ -41,7 +43,7 @@ def make_net():
     )
 
 
-def train_net(net, X, y, steps=500_000, lr=1/50):
+def train_net(net, X, y, steps=100000, lr=1/100):
     X_t = torch.tensor(X, dtype=torch.float32)
     y_t = torch.tensor(y, dtype=torch.float32).unsqueeze(-1)
 
@@ -70,23 +72,30 @@ def learned_fun(net):
 # Experiment for different dataset sizes
 # ============================================================
 dataset_sizes = [50, 100, 1000, 10000]
-
 results = []
 
+os.makedirs("models", exist_ok=True)
+
 for N in dataset_sizes:
-    print(f"\n=== Training with N = {N} ===")
+    print(f"\n=== N = {N} ===")
+    model_path = f"models/banana_net_N{N}.pt"
 
     X, y = generate_training_data(N, seed=0)
     net = make_net()
-    train_net(net, X, y)
 
-    # Evaluate at important points
-    x_test = np.array([
-        [1, 1, 1, 1],
-        [-1, 1, 1, 1],
-    ])
+    if os.path.exists(model_path):
+        net.load_state_dict(torch.load(model_path))
+        net.eval()
+        print("Loaded model.")
+    else:
+        train_net(net, X, y)
+        torch.save(net.state_dict(), model_path)
+        print("Trained and saved model.")
 
+    # Evaluate at key points
+    x_test = np.array([[1, 1, 1, 1], [-1, 1, 1, 1]])
     y_true = np.array([banana4(x) for x in x_test])
+
     with torch.no_grad():
         y_pred = net(torch.tensor(x_test, dtype=torch.float32)).squeeze().numpy()
 
@@ -117,7 +126,7 @@ X, y = generate_training_data(N)
 with torch.no_grad():
     y_hat = net(torch.tensor(X, dtype=torch.float32)).squeeze().numpy()
 
-plt.figure(figsize=(4,4))
+plt.figure(figsize=(4, 4))
 plt.scatter(y, y_hat, s=3, alpha=0.3)
 plt.plot([0, y.max()], [0, y.max()], 'r--')
 plt.xlabel("True f(x)")
@@ -131,13 +140,16 @@ plt.show()
 # Visualization 2: 1D slice through valley
 # ============================================================
 x1 = np.linspace(-2, 2, 400)
-X_slice = np.stack([x1, np.ones_like(x1), np.ones_like(x1), np.ones_like(x1)], axis=1)
+X_slice = np.stack(
+    [x1, np.ones_like(x1), np.ones_like(x1), np.ones_like(x1)],
+    axis=1,
+)
 
 true_vals = np.array([banana4(x) for x in X_slice])
 with torch.no_grad():
     learned_vals = net(torch.tensor(X_slice, dtype=torch.float32)).squeeze().numpy()
 
-plt.figure(figsize=(6,4))
+plt.figure(figsize=(6, 4))
 plt.plot(x1, true_vals, label="True Rosenbrock")
 plt.plot(x1, learned_vals, "--", label="Learned")
 plt.xlabel("$x_1$")

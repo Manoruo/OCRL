@@ -1,0 +1,30 @@
+# --------------------
+# Physical parameters
+# --------------------
+m_w: 0.173 # mass of the wheel
+r_w: 0.0323 # radius of the wheel
+I_w: 0.0066 # moment of inertia of the wheel
+
+m_p: 0.653 # mass of the pole
+l_p: 0.043 # length of pole to its center of mass
+I_p: 0.00084 # moment of inertia of pole about its center of mass
+
+g: 9.81 # gravity constant
+f: 0.0 # friction coefficent
+
+# --------------------
+# Simulation parameters
+# --------------------
+dt: 0.003003 # How long each time step is (in seconds)
+max_torque: 5.0 # Max amount of torque that can be applied to the wheel
+max_body_angle: 1.5 # Termination angle for the pole (in radians)
+ep_len: 3 # Maximum episode length (in seconds)
+
+# --------------------
+# Initial state ranges
+# --------------------
+x_initial_range:
+  wh: [-6.28, 6.28] # wheel angle init range (radians)
+  whd: [-8.0, 8.0] # wheel angular velocity init range (rad/s)
+  th: [-0.35, 0.35] # pole angle init range (radians)
+  thd: [-6.0, 6.0] # pole angular velocity init range (rad /s)

@@ -1,41 +1,70 @@
 import numpy as np
 from scipy.optimize import minimize
 
-from simulator import TWIPEnv, linear_feedback_controller
+from simulator import TWIPEnv
 
 
 # ============================================================
-# Rollout evaluation
+# Cost parameters
 # ============================================================
 
-def evaluate_gains(gains, env, max_steps=1000):
+BODY_ANGLE_WEIGHT = 1.0
+BODY_ANGULAR_VELOCITY_WEIGHT = 0.1
+FALL_PENALTY = 1000.0
+GAIN_REG_WEIGHT = 1e-3
+
+
+# ============================================================
+# Rollout
+# ============================================================
+
+def rollout(env, gains, render=False, log=False, reset_options=None):
     """
-    Runs one rollout with fixed gains and returns a scalar cost.
-    Lower cost = better.
+    Run one episode with fixed feedback gains.
+
+    Args:
+        env: TWIPEnv
+        gains: [k_wheel_angle, k_wheel_velocity,
+                k_body_angle,  k_body_angular_velocity]
+        render: whether to render the rollout
+        log: whether to log internal states (for plotting)
+        reset_options: optional dict passed to env.reset()
+
+    Returns:
+        total_cost (float)
     """
 
-    state, _ = env.reset()
+    state, _ = env.reset(options=reset_options)
     total_cost = 0.0
 
-    for _ in range(max_steps):
-        torque = linear_feedback_controller(state, gains)
+    while True:
+        state, _, terminated, truncated, _ = env.step(gains, log=log)
 
-        state, _, terminated, truncated, _ = env.step([torque])
-        done = terminated 
+        if render:
+            env.render()
 
+        # Unpack state explicitly
+        wheel_angle = state[0]
+        wheel_velocity = state[1]
         body_angle = state[2]
         body_angular_velocity = state[3]
 
-        # Penalize deviation from upright
-        total_cost += body_angle**2 + 0.1 * body_angular_velocity**2
+        # Running cost
+        step_cost = (
+            BODY_ANGLE_WEIGHT * body_angle**2
+            + BODY_ANGULAR_VELOCITY_WEIGHT * body_angular_velocity**2
+        )
+        total_cost += step_cost
 
-        if done:
-            # Heavy penalty for falling
-            total_cost += 1000.0
+        if terminated:
+            total_cost += FALL_PENALTY
             break
 
-    # Soft regularization to avoid insane gains
-    total_cost += 1e-3 * np.sum(gains**2)
+        if truncated:
+            break
+
+    # Gain regularization (keeps optimizer sane)
+    total_cost += GAIN_REG_WEIGHT * np.sum(gains**2)
 
     return total_cost
 
@@ -45,18 +74,27 @@ def evaluate_gains(gains, env, max_steps=1000):
 # ============================================================
 
 def optimize_gains(env):
-    def objective(gains):
-        return evaluate_gains(gains, env)
+    """
+    Optimize linear feedback gains using Nelder–Mead.
+    """
 
-    # Initial guess 
-    x0 = np.array([0.0, 0.5, 10.0, 1.0])
+    def objective(gains):
+        return rollout(env, gains, render=False, log=False)
+
+    # Initial guess:
+    # [k_wheel_angle, k_wheel_velocity,
+    #  k_body_angle,  k_body_angular_velocity]
+    initial_gains = np.array(
+        [0.0, 0.5, 10.0, 1.0],
+        dtype=np.float64,
+    )
 
     result = minimize(
         objective,
-        x0,
+        initial_gains,
         method="Nelder-Mead",
         options={
-            "maxiter": 300,
+            "maxiter": 10,
             "disp": True,
         },
     )
@@ -70,42 +108,50 @@ def optimize_gains(env):
 
 if __name__ == "__main__":
 
-    params = {
-        "m_w": 0.173,
-        "m_p": 0.826 - 0.173,
-        "I_w": 0.0066,
-        "l_p": 0.043,
-        "I_p": 0.00084,
-        "r_w": 0.0323,
-        "g": 9.81,
-        "f": 0.0,
-        "dt": 1 / 333,
-        "x_initial_range": {
-            "wh": [-1.0 / 0.0323, 1.0 / 0.0323],
-            "whd": [-20.0, 20.0],
-            "th": [-np.pi / 4, np.pi / 4],
-            "thd": [-20.0, 20.0],
-        },
-        "max_torque": 5.0,
-        "ep_len": 3 * 333,
-    }
+    # --------------------------------------------------------
+    # Create environment
+    # --------------------------------------------------------
+    env = TWIPEnv("./sim_params.yaml")
+    # env = TWIPEnv()  # uses default parameters
 
-    env = TWIPEnv(params)
-
-    best_gains = optimize_gains(env)
+    # --------------------------------------------------------
+    # Optimize gains 
+    # --------------------------------------------------------
+    best_gains = np.round(optimize_gains(env), 3)
 
     print("\nOptimized gains:")
-    print(best_gains)
+    print("  k_wheel_angle           =", best_gains[0])
+    print("  k_wheel_velocity        =", best_gains[1])
+    print("  k_body_angle            =", best_gains[2])
+    print("  k_body_angular_velocity =", best_gains[3])
 
     # --------------------------------------------------------
-    # Test optimized controller visually
+    # Challenging visual-test initial conditions
     # --------------------------------------------------------
 
-    state, _ = env.reset()
-    while True:
-        torque = linear_feedback_controller(state, best_gains)
-        state, _, terminated, truncated, _ = env.step([torque], log=True)
-        env.render()
-        if terminated or truncated:
-            env.plot_logs()
-            break
+    # Stress-test initialization:
+        # Start far from equilibrium with high angular momentum to probe the limits
+        # of recoverability under torque constraints. This is a diagnostic scenario.
+
+
+    visual_reset_options = {
+        "x_initial_range": {
+            "wh":  [np.deg2rad(180), np.deg2rad(180)],     # wheel rotation (from upright)
+            "whd": [np.deg2rad(0), np.deg2rad(0)],       # wheel speed
+            "th":  [np.deg2rad(45), np.deg2rad(45)],     # body angle (from upright)
+            "thd": [np.deg2rad(100), np.deg2rad(100)],       # body velocity
+        }
+    }
+
+    # --------------------------------------------------------
+    # Visual test (explicit, difficult, interpretable)
+    # --------------------------------------------------------
+    rollout(
+        env,
+        best_gains,
+        render=True,
+        log=True,
+        reset_options=visual_reset_options,
+    )
+
+    env.plot_logs()
