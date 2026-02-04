@@ -1,6 +1,5 @@
 import numpy as np
 from stable_baselines3 import PPO
-
 from simulator import TWIPEnv
 
 
@@ -22,9 +21,9 @@ if __name__ == "__main__":
         "dt": 1 / 333,
         "x_initial_range": {
             "wh": [-1.0 / 0.0323, 1.0 / 0.0323],
-            "whd": [0, 0],
+            "whd": [-20, 20],
             "th": [-np.pi / 4, np.pi / 4],
-            "thd": [0, 0],
+            "thd": [-20, 20],
         },
         "max_torque": 5.0,
         "ep_len": 3 * 333,
@@ -45,7 +44,7 @@ if __name__ == "__main__":
 
 
     model.learn(total_timesteps=200_000)
-
+    print("Training complete")
     # --------------------
     # Test trained policy
     # --------------------
@@ -53,7 +52,8 @@ if __name__ == "__main__":
 
     while True:
         action, _ = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, _ = env.step(action)
+        obs, reward, terminated, truncated, _ = env.step(action, log=True)
         env.render()
         if terminated or truncated:
+            env.plot_logs()
             break

@@ -21,7 +21,7 @@ def evaluate_gains(gains, env, max_steps=1000):
         torque = linear_feedback_controller(state, gains)
 
         state, _, terminated, truncated, _ = env.step([torque])
-        done = terminated or truncated
+        done = terminated 
 
         body_angle = state[2]
         body_angular_velocity = state[3]
@@ -82,9 +82,9 @@ if __name__ == "__main__":
         "dt": 1 / 333,
         "x_initial_range": {
             "wh": [-1.0 / 0.0323, 1.0 / 0.0323],
-            "whd": [0, 0],
+            "whd": [-20.0, 20.0],
             "th": [-np.pi / 4, np.pi / 4],
-            "thd": [0, 0],
+            "thd": [-20.0, 20.0],
         },
         "max_torque": 5.0,
         "ep_len": 3 * 333,
@@ -102,10 +102,10 @@ if __name__ == "__main__":
     # --------------------------------------------------------
 
     state, _ = env.reset()
-
     while True:
         torque = linear_feedback_controller(state, best_gains)
-        state, _, terminated, truncated, _ = env.step([torque])
+        state, _, terminated, truncated, _ = env.step([torque], log=True)
         env.render()
         if terminated or truncated:
+            env.plot_logs()
             break

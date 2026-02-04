@@ -4,7 +4,6 @@ from gym import spaces
 import matplotlib.pyplot as plt
 
 
-
 # ============================================================
 # Two-Wheeled Inverted Pendulum Environment
 # ============================================================
@@ -55,6 +54,11 @@ class TWIPEnv(gym.Env):
 
         self.state = None
 
+        # --------------------
+        # Logging (ADDED)
+        # --------------------
+        self.log = {}
+
     # --------------------
     # Reset (Gym ≥0.26)
     # --------------------
@@ -68,6 +72,17 @@ class TWIPEnv(gym.Env):
             np.random.uniform(*r["th"]),
             np.random.uniform(*r["thd"]),
         ], dtype=np.float32)
+
+        # Reset logs (ADDED)
+        self.log = {
+            "t": [],
+            "wheel_angle": [],
+            "wheel_velocity": [],
+            "body_angle": [],
+            "body_angular_velocity": [],
+            "torque": [],
+        }
+        self._t = 0.0
 
         return self.state.copy(), {}
 
@@ -106,7 +121,7 @@ class TWIPEnv(gym.Env):
     # --------------------
     # Step (Gym ≥0.26)
     # --------------------
-    def step(self, action):
+    def step(self, action, log=False):
         torque = float(np.clip(action[0], -self.max_torque, self.max_torque))
 
         wheel_angle = self.state[0]
@@ -134,13 +149,50 @@ class TWIPEnv(gym.Env):
         )
 
         terminated = abs(body_angle) > self.max_body_angle
-        truncated = False
+        truncated = self._t > 5
 
         reward = -(body_angle**2 + 0.1 * body_angular_velocity**2)
         if terminated:
             reward -= 10.0
 
+        # Log state
+        if log:
+            self.log["t"].append(self._t)
+            self.log["wheel_angle"].append(wheel_angle)
+            self.log["wheel_velocity"].append(wheel_velocity)
+            self.log["body_angle"].append(body_angle)
+            self.log["body_angular_velocity"].append(body_angular_velocity)
+            self.log["torque"].append(torque)
+        self._t += self.time_step
+
         return self.state.copy(), reward, terminated, truncated, {}
+
+    # --------------------
+    # Plot logged data (ADDED)
+    # --------------------
+    def plot_logs(self):
+        t = np.array(self.log["t"])
+
+        plt.figure(figsize=(8, 6))
+
+        plt.subplot(3, 1, 1)
+        plt.plot(t, self.log["body_angle"])
+        plt.ylabel("Body angle [rad]")
+        plt.grid(True)
+
+        plt.subplot(3, 1, 2)
+        plt.plot(t, self.log["wheel_velocity"])
+        plt.ylabel("Wheel vel [rad/s]")
+        plt.grid(True)
+
+        plt.subplot(3, 1, 3)
+        plt.plot(t, self.log["torque"])
+        plt.ylabel("Torque [Nm]")
+        plt.xlabel("Time [s]")
+        plt.grid(True)
+
+        plt.tight_layout()
+        plt.show(block=True)
 
     # --------------------
     # Rendering
@@ -187,22 +239,12 @@ class TWIPEnv(gym.Env):
         self._fig.canvas.draw()
         self._fig.canvas.flush_events()
 
+
 # ============================================================
 # Linear feedback controller (policy)
 # ============================================================
 
 def linear_feedback_controller(state, gains):
-    """
-    Decide how much torque to apply based on how the robot is moving.
-
-    Control law. Negative sign telling you to push in opposite direction in which ur falling.
-
-    state  = [wheel_angle, wheel_velocity, body_angle, body_angular_velocity]
-    gains  = [k_wheel_angle, k_wheel_velocity, k_body_angle, k_body_velocity]
-
-    Each gain tells us how strongly to react to that part of the state.
-    """
-
     wheel_angle = state[0]
     wheel_velocity = state[1]
     body_angle = state[2]
@@ -213,10 +255,6 @@ def linear_feedback_controller(state, gains):
     k_body_angle = gains[2]
     k_body_angular_velocity = gains[3]
 
-    # Compute how much torque to apply:
-    # - push back against body lean
-    # - damp falling motion
-    # - lightly damp wheel motion
     torque = (
         -k_wheel_angle * wheel_angle # p term 
         -k_wheel_velocity * wheel_velocity # D term
