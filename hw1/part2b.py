@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from stable_baselines3 import PPO
 from simulator import TWIPEnv
@@ -30,21 +31,31 @@ if __name__ == "__main__":
     }
 
     env = TWIPEnv(params)
+    model_path = "ppo_twip_model"
 
-    model = PPO(
-        "MlpPolicy",
-        env,
-        learning_rate=3e-4,
-        n_steps=2048,
-        batch_size=64,
-        gamma=0.99,
-        verbose=1,
-        tensorboard_log="./ppo_twip_logs/"
-    )
+    # --------------------
+    # Load if exists, otherwise train
+    # --------------------
+    if os.path.exists(model_path + ".zip"):
+        print("Loading existing model...")
+        model = PPO.load(model_path, env=env)
+    else:
+        print("Training new model...")
+        model = PPO(
+            "MlpPolicy",
+            env,
+            learning_rate=3e-4,
+            n_steps=2048,
+            batch_size=64,
+            gamma=0.99,
+            verbose=1,
+            tensorboard_log="./ppo_twip_logs/",
+        )
 
+        model.learn(total_timesteps=200_000)
+        model.save(model_path)
+        print("Training complete, model saved.")
 
-    model.learn(total_timesteps=200_000)
-    print("Training complete")
     # --------------------
     # Test trained policy
     # --------------------
@@ -54,6 +65,7 @@ if __name__ == "__main__":
         action, _ = model.predict(obs, deterministic=True)
         obs, reward, terminated, truncated, _ = env.step(action, log=True)
         env.render()
+
         if terminated or truncated:
             env.plot_logs()
             break

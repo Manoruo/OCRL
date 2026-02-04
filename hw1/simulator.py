@@ -53,15 +53,8 @@ class TWIPEnv(gym.Env):
         )
 
         self.state = None
-
-        # --------------------
-        # Logging (ADDED)
-        # --------------------
         self.log = {}
 
-    # --------------------
-    # Reset (Gym ≥0.26)
-    # --------------------
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
@@ -73,7 +66,7 @@ class TWIPEnv(gym.Env):
             np.random.uniform(*r["thd"]),
         ], dtype=np.float32)
 
-        # Reset logs (ADDED)
+
         self.log = {
             "t": [],
             "wheel_angle": [],
@@ -86,9 +79,7 @@ class TWIPEnv(gym.Env):
 
         return self.state.copy(), {}
 
-    # --------------------
-    # Dynamics
-    # --------------------
+
     def twip3(
         self,
         wheel_angle,
@@ -118,9 +109,7 @@ class TWIPEnv(gym.Env):
         wheel_accel, body_accel = np.linalg.solve(M, rhs)
         return wheel_accel, body_accel
 
-    # --------------------
-    # Step (Gym ≥0.26)
-    # --------------------
+
     def step(self, action, log=False):
         torque = float(np.clip(action[0], -self.max_torque, self.max_torque))
 
@@ -167,9 +156,6 @@ class TWIPEnv(gym.Env):
 
         return self.state.copy(), reward, terminated, truncated, {}
 
-    # --------------------
-    # Plot logged data (ADDED)
-    # --------------------
     def plot_logs(self):
         t = np.array(self.log["t"])
 
@@ -194,9 +180,6 @@ class TWIPEnv(gym.Env):
         plt.tight_layout()
         plt.show(block=True)
 
-    # --------------------
-    # Rendering
-    # --------------------
     def render(self):
         wheel_angle, wheel_velocity, body_angle, body_angular_velocity = self.state
 
@@ -241,7 +224,7 @@ class TWIPEnv(gym.Env):
 
 
 # ============================================================
-# Linear feedback controller (policy)
+# Linear feedback controller 
 # ============================================================
 
 def linear_feedback_controller(state, gains):

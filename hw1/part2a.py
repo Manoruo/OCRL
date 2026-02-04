@@ -48,7 +48,7 @@ def optimize_gains(env):
     def objective(gains):
         return evaluate_gains(gains, env)
 
-    # Initial guess (does NOT need to be good)
+    # Initial guess 
     x0 = np.array([0.0, 0.5, 10.0, 1.0])
 
     result = minimize(
