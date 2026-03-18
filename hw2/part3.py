@@ -20,7 +20,6 @@ from stable_baselines3.common.vec_env import VecNormalize
 
 from utils.simulator import TWIPEnv
 from utils.lqr import LQRController
-from utils.logger import Logger
 
 # ============================================================
 # Config
@@ -28,14 +27,13 @@ from utils.logger import Logger
 
 SIM_PARAMS_PATH = "./sim_params.yaml"
 
-TRAIN_MODEL  = False          # set True to retrain
-MODEL_PATH   = "ppo_twip_controller"
-VECNORM_PATH = "ppo_twip_vecnormalize.pkl"
+TRAIN_MODEL   = False
+MODEL_PATH    = "ppo_twip_controller"
+VECNORM_PATH  = "ppo_twip_vecnormalize.pkl"
 
-RENDER_EVERY = -1           # set to e.g. 5 to render, -1 to disable
+RENDER_EVERY  = -1
 N_TRAIN_STEPS = 1_000_000
 
-# fixed seed for reproducible comparison
 np.random.seed(42)
 
 # ============================================================
@@ -45,7 +43,6 @@ np.random.seed(42)
 simulator = TWIPEnv(sim_params_path=SIM_PARAMS_PATH, control_mode="torque")
 A, B      = simulator.linearize()
 
-# LQR — Bryson scaled from part 1
 Q_lqr = np.diag([0.025, 0.04, 11.0, 0.25])
 R_lqr = np.array([[14.7]])
 lqr_controller = LQRController(A, B, Q_lqr, R_lqr, simulator.dt)
@@ -91,7 +88,6 @@ else:
     model     = PPO.load(MODEL_PATH)
     print("Model loaded.")
 
-# disable normalization during evaluation
 train_env.training   = False
 train_env.norm_reward = False
 
@@ -101,18 +97,18 @@ train_env.norm_reward = False
 
 def run_episode(controller_type, initial_state, max_steps=2000):
     """
-    Run one episode with either LQR or PPO controller.
-    Returns a Logger with logged states and controls.
-    Torque is clipped for LQR (no fatal error check) so
-    we can see full LQR behavior for comparison.
+    Run one episode with LQR or PPO.
+    Returns times, states, controls as numpy arrays.
     """
 
     simulator.state      = initial_state.copy().astype(np.float32)
     simulator.time       = 0.0
     simulator.step_count = 0
 
-    logger = Logger()
-    print(f"Running episode for {controller_type}")
+    times    = []
+    states   = []
+    controls = []
+
     for i in range(max_steps):
 
         t     = simulator.time
@@ -120,21 +116,21 @@ def run_episode(controller_type, initial_state, max_steps=2000):
 
         if controller_type == "LQR":
             u = lqr_controller.control(state)
-            # clip torque for LQR — no fatal error check in part 3
-            u = np.clip(u, -simulator.max_torque, simulator.max_torque)
+            u = float(np.clip(u, -simulator.max_torque, simulator.max_torque))
 
         elif controller_type == "PPO":
-            obs            = train_env.normalize_obs(state.reshape(1, -1))
-            action, _      = model.predict(obs, deterministic=True)
-            u              = float(np.asarray(action).squeeze())
+            obs       = train_env.normalize_obs(state.reshape(1, -1))
+            action, _ = model.predict(obs, deterministic=True)
+            u         = float(np.asarray(action).squeeze())
 
         else:
             raise ValueError(f"Unknown controller: {controller_type}")
 
-        # step simulator
         next_state, reward, done, trunc, _ = simulator.step(u)
 
-        logger.log(t=t, true_state=next_state, control=u)
+        times.append(t)
+        states.append(next_state.copy())
+        controls.append(u)
 
         if RENDER_EVERY != -1 and i % RENDER_EVERY == 0:
             simulator.render()
@@ -142,7 +138,11 @@ def run_episode(controller_type, initial_state, max_steps=2000):
         if done or trunc:
             break
 
-    return logger
+    return (
+        np.array(times),
+        np.array(states),
+        np.array(controls)
+    )
 
 # ============================================================
 # Plotting
@@ -155,11 +155,11 @@ STATE_LABELS = [
     "Body Ang. Velocity (rad/s)"
 ]
 
-def plot_comparison(lqr_logger, ppo_logger, initial_state, filename):
-    """Plot LQR vs PPO states and torque side by side."""
 
-    lqr_logger.to_arrays()
-    ppo_logger.to_arrays()
+def plot_comparison(lqr_times, lqr_states, lqr_controls,
+                    ppo_times, ppo_states, ppo_controls,
+                    initial_state, filename):
+    """Plot LQR vs PPO states and torque."""
 
     fig, axes = plt.subplots(2, 3, figsize=(15, 7))
     fig.suptitle(
@@ -167,18 +167,16 @@ def plot_comparison(lqr_logger, ppo_logger, initial_state, filename):
         fontsize=12, fontweight='bold'
     )
 
-    colors = {"LQR": "blue", "PPO": "red"}
-
     # state plots
     for idx in range(4):
         row = idx // 2
         col = idx  % 2
         ax  = axes[row, col]
 
-        ax.plot(lqr_logger.times, lqr_logger.true_states[:, idx],
-                color=colors["LQR"], linewidth=1.5, label="LQR")
-        ax.plot(ppo_logger.times, ppo_logger.true_states[:, idx],
-                color=colors["PPO"], linewidth=1.5, label="PPO", linestyle='--')
+        ax.plot(lqr_times, lqr_states[:, idx],
+                'b-', linewidth=1.5, label="LQR")
+        ax.plot(ppo_times, ppo_states[:, idx],
+                'r--', linewidth=1.5, label="PPO")
 
         ax.set_ylabel(STATE_LABELS[idx])
         ax.set_xlabel("Time (s)")
@@ -188,19 +186,10 @@ def plot_comparison(lqr_logger, ppo_logger, initial_state, filename):
 
     # torque plot
     ax_torque = axes[0, 2]
-    if len(lqr_logger.controls) > 0:
-        ax_torque.plot(
-            lqr_logger.times[:len(lqr_logger.controls)],
-            lqr_logger.controls,
-            color=colors["LQR"], linewidth=1.5, label="LQR"
-        )
-    if len(ppo_logger.controls) > 0:
-        ax_torque.plot(
-            ppo_logger.times[:len(ppo_logger.controls)],
-            ppo_logger.controls,
-            color=colors["PPO"], linewidth=1.5, label="PPO", linestyle='--'
-        )
-
+    ax_torque.plot(lqr_times[:len(lqr_controls)], lqr_controls,
+                   'b-', linewidth=1.5, label="LQR")
+    ax_torque.plot(ppo_times[:len(ppo_controls)], ppo_controls,
+                   'r--', linewidth=1.5, label="PPO")
     ax_torque.axhline( simulator.max_torque, color='k',
                        linestyle=':', linewidth=1, label='torque limit')
     ax_torque.axhline(-simulator.max_torque, color='k',
@@ -211,7 +200,6 @@ def plot_comparison(lqr_logger, ppo_logger, initial_state, filename):
     ax_torque.legend(fontsize=8)
     ax_torque.grid(True, alpha=0.3)
 
-    # hide unused subplot
     axes[1, 2].axis('off')
 
     plt.tight_layout()
@@ -221,43 +209,37 @@ def plot_comparison(lqr_logger, ppo_logger, initial_state, filename):
 
 
 # ============================================================
-# Main comparison
+# Main
 # ============================================================
 
 def main():
 
-    # ----------------------------------
-    # Test 1 — small tilt (LQR should work fine)
-    # ----------------------------------
+    # Test 1 — small tilt
     initial_small = np.array([0.0, 0.0, 0.15, 0.0])
-
     print("\nTest 1: Small tilt (0.15 rad / ~9 degrees)")
-    lqr_log = run_episode("LQR", initial_small)
-    ppo_log = run_episode("PPO", initial_small)
-    plot_comparison(lqr_log, ppo_log, initial_small,
-                    filename="part3_small_tilt.png")
+    lqr_times, lqr_states, lqr_controls = run_episode("LQR", initial_small)
+    ppo_times, ppo_states, ppo_controls = run_episode("PPO", initial_small)
+    plot_comparison(lqr_times, lqr_states, lqr_controls,
+                    ppo_times, ppo_states, ppo_controls,
+                    initial_small, filename="part3_small_tilt.png")
 
-    # ----------------------------------
-    # Test 2 — large tilt (nonlinear should help)
-    # ----------------------------------
+    # Test 2 — large tilt
     initial_large = np.array([0.0, 0.0, 0.6, 0.0])
-
     print("\nTest 2: Large tilt (0.6 rad / ~34 degrees)")
-    lqr_log = run_episode("LQR", initial_large)
-    ppo_log = run_episode("PPO", initial_large)
-    plot_comparison(lqr_log, ppo_log, initial_large,
-                    filename="part3_large_tilt.png")
+    lqr_times, lqr_states, lqr_controls = run_episode("LQR", initial_large)
+    ppo_times, ppo_states, ppo_controls = run_episode("PPO", initial_large)
+    plot_comparison(lqr_times, lqr_states, lqr_controls,
+                    ppo_times, ppo_states, ppo_controls,
+                    initial_large, filename="part3_large_tilt.png")
 
-    # ----------------------------------
     # Test 3 — large tilt + angular velocity
-    # ----------------------------------
     initial_aggressive = np.array([0.0, 0.0, 0.5, 1.5])
-
     print("\nTest 3: Large tilt + angular velocity (0.5 rad, 1.5 rad/s)")
-    lqr_log = run_episode("LQR", initial_aggressive)
-    ppo_log = run_episode("PPO", initial_aggressive)
-    plot_comparison(lqr_log, ppo_log, initial_aggressive,
-                    filename="part3_aggressive.png")
+    lqr_times, lqr_states, lqr_controls = run_episode("LQR", initial_aggressive)
+    ppo_times, ppo_states, ppo_controls = run_episode("PPO", initial_aggressive)
+    plot_comparison(lqr_times, lqr_states, lqr_controls,
+                    ppo_times, ppo_states, ppo_controls,
+                    initial_aggressive, filename="part3_aggressive.png")
 
     plt.show()
     print("\nDone.")

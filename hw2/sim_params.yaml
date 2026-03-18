@@ -23,8 +23,9 @@ ep_len: 3 # Maximum episode length (in seconds)
 # --------------------
 # Initial state ranges
 # --------------------
+
 x_initial_range:
-  wh: [0, 0] # wheel angle init range (radians)
-  whd: [0, 0] # wheel angular velocity init range (rad/s)
-  th: [-0.2, 0.2] # pole angle init range (radians)
-  thd: [0, 0] # pole angular velocity init range (rad /s)
+  wh: [-6.28, 6.28] # wheel angle init range (radians)
+  whd: [-8.0, 8.0] # wheel angular velocity init range (rad/s)
+  th: [-0.35, 0.35] # pole angle init range (radians)
+  thd: [-6.0, 6.0] # pole angular velocity init range (rad /s)

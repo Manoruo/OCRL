@@ -13,14 +13,13 @@ The policy learns to:
   2. Decelerate as it approaches
   3. Arrive balanced with zero velocity
 
-Compares: LQR regulator vs Part 3 PPO vs Part 4 goal-conditioned PPO
+Compares: LQR regulator vs goal-conditioned PPO
 """
 
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-import gym
 from gym import spaces
 
 from stable_baselines3 import PPO
@@ -29,7 +28,6 @@ from stable_baselines3.common.vec_env import VecNormalize
 
 from utils.simulator import TWIPEnv
 from utils.lqr import LQRController
-from utils.logger import Logger
 
 # ============================================================
 # Config
@@ -37,20 +35,18 @@ from utils.logger import Logger
 
 SIM_PARAMS_PATH = "./sim_params.yaml"
 
-TRAIN_MODEL  = False
-MODEL_PATH   = "ppo_twip_part4"
-VECNORM_PATH = "ppo_twip_part4_vecnorm.pkl"
+TRAIN_MODEL   = False
+MODEL_PATH    = "ppo_twip_part4"
+VECNORM_PATH  = "ppo_twip_part4_vecnorm.pkl"
 
-N_TRAIN_STEPS = 2_000_000   # more steps needed for goal-conditioned task
-RENDER_EVERY  = 5
+N_TRAIN_STEPS = 2_000_000
+RENDER_EVERY  = -1
 
-# goal range during training
-GOAL_MIN = -3.0   # rad (~1m back)
-GOAL_MAX =  3.0   # rad (~1m forward)
+GOAL_MIN = -3.0   # rad
+GOAL_MAX =  3.0   # rad
 
-# success criteria
-GOAL_THRESHOLD    = 0.05   # rad — close enough to goal
-VELOCITY_THRESHOLD = 0.1   # rad/s — slow enough to count as stopped
+GOAL_THRESHOLD     = 0.05   # rad
+VELOCITY_THRESHOLD = 0.1    # rad/s
 
 np.random.seed(42)
 
@@ -63,16 +59,13 @@ class TWIPGoalEnv(TWIPEnv):
     Extends TWIPEnv with a goal wheel position.
     Observation: [wheel_angle, wheel_velocity, body_angle,
                   body_angular_velocity, wheel_angle_goal]
-    Reward: penalizes distance to goal, body tilt, and velocity at goal.
     """
 
     def __init__(self):
         super().__init__(sim_params_path=SIM_PARAMS_PATH, control_mode="torque")
 
-        # goal sampled each episode
         self.wheel_angle_goal = 0.0
 
-        # extend observation space to include goal
         self.observation_space = spaces.Box(
             low  = np.array([-np.inf, -np.inf, -np.pi, -np.inf, GOAL_MIN],
                             dtype=np.float32),
@@ -81,15 +74,10 @@ class TWIPGoalEnv(TWIPEnv):
         )
 
     def reset(self, seed=None, options=None):
-
-        # always start upright at zero
-        self.state = np.zeros(4, dtype=np.float32)
-        self.step_count = 0
-        self.time       = 0.0
-
-        # sample a new goal each episode
+        self.state        = np.zeros(4, dtype=np.float32)
+        self.step_count   = 0
+        self.time         = 0.0
         self.wheel_angle_goal = np.random.uniform(GOAL_MIN, GOAL_MAX)
-
         return self._get_obs(), {}
 
     def _get_obs(self):
@@ -97,12 +85,8 @@ class TWIPGoalEnv(TWIPEnv):
 
     def step(self, action):
 
-        torque = float(np.asarray(action).squeeze())
-
-        # fatal error check
-        fatal_error = self.is_fatal_error(torque)
-
-        # clip torque for physics
+        torque         = float(np.asarray(action).squeeze())
+        fatal_error    = self.is_fatal_error(torque)
         torque_clipped = np.clip(torque, -self.max_torque, self.max_torque)
 
         wheel_angle, wheel_velocity, body_angle, body_angular_velocity = self.state
@@ -113,7 +97,6 @@ class TWIPGoalEnv(TWIPEnv):
             torque_clipped
         )
 
-        # euler integration
         wheel_velocity        += wheel_accel * self.dt
         wheel_angle           += wheel_velocity * self.dt
         body_angular_velocity += body_accel * self.dt
@@ -127,26 +110,23 @@ class TWIPGoalEnv(TWIPEnv):
         self.step_count += 1
         self.time       += self.dt
 
-        # termination conditions
         body_fall  = abs(body_angle) > self.max_body_angle
         truncated  = self.time >= self.max_ep_len
         terminated = body_fall or fatal_error
 
-        # reward
         wheel_error = wheel_angle - self.wheel_angle_goal
 
         if fatal_error:
             reward = -1e6
         else:
             reward = -(
-                1.0  * wheel_error**2              # drive to goal
-                + 0.01 * wheel_velocity**2         # arrive with low velocity
-                + 10.0 * body_angle**2             # stay upright
-                + 0.1  * body_angular_velocity**2  # damp body oscillation
-                + 0.001 * torque_clipped**2        # smooth torque
+                1.0   * wheel_error**2
+                + 0.01  * wheel_velocity**2
+                + 10.0  * body_angle**2
+                + 0.1   * body_angular_velocity**2
+                + 0.001 * torque_clipped**2
             )
 
-            # bonus for reaching goal balanced
             at_goal     = abs(wheel_error)    < GOAL_THRESHOLD
             nearly_stop = abs(wheel_velocity) < VELOCITY_THRESHOLD
             upright     = abs(body_angle)     < 0.05
@@ -178,7 +158,7 @@ def get_model():
             n_steps       = 2048,
             batch_size    = 64,
             verbose       = 1,
-            policy_kwargs = dict(net_arch=[256, 256])  # larger network for goal conditioning
+            policy_kwargs = dict(net_arch=[256, 256])
         )
 
         model.learn(total_timesteps=N_TRAIN_STEPS)
@@ -194,7 +174,7 @@ def get_model():
 
         eval_env = make_vec_env(lambda: TWIPGoalEnv(), n_envs=1)
         eval_env = VecNormalize.load(VECNORM_PATH, eval_env)
-        eval_env.training   = False
+        eval_env.training    = False
         eval_env.norm_reward = False
 
         model = PPO.load(MODEL_PATH)
@@ -204,7 +184,7 @@ def get_model():
 
 
 # ============================================================
-# Rollout helpers
+# Simulator and LQR
 # ============================================================
 
 simulator = TWIPEnv(sim_params_path=SIM_PARAMS_PATH, control_mode="torque")
@@ -215,32 +195,37 @@ R_lqr = np.array([[14.7]])
 lqr_controller = LQRController(A, B, Q_lqr, R_lqr, simulator.dt)
 
 
+# ============================================================
+# Rollout helpers
+# ============================================================
+
 def run_lqr(goal_wheel_angle, max_steps=2000):
-    """
-    Run LQR from upright position toward goal.
-    LQR treats the error relative to goal as the state.
-    """
+    """Run LQR with wheel angle error relative to goal."""
 
     simulator.state      = np.zeros(4, dtype=np.float32)
     simulator.time       = 0.0
     simulator.step_count = 0
 
-    logger = Logger()
+    times    = []
+    states   = []
+    controls = []
 
     for i in range(max_steps):
 
         t     = simulator.time
         state = simulator.get_state()
 
-        # LQR error relative to goal
-        x_err        = state.copy()
-        x_err[0]     = state[0] - goal_wheel_angle  # wheel angle error
+        x_err    = state.copy()
+        x_err[0] = state[0] - goal_wheel_angle
 
-        u = -lqr_controller.K @ x_err
+        u = float(-lqr_controller.K @ x_err)
         u = float(np.clip(u, -simulator.max_torque, simulator.max_torque))
 
         next_state, reward, done, trunc, _ = simulator.step(u)
-        logger.log(t=t, true_state=next_state, control=u)
+
+        times.append(t)
+        states.append(next_state.copy())
+        controls.append(u)
 
         if RENDER_EVERY != -1 and i % RENDER_EVERY == 0:
             simulator.render()
@@ -248,33 +233,36 @@ def run_lqr(goal_wheel_angle, max_steps=2000):
         if done or trunc:
             break
 
-    return logger
+    return np.array(times), np.array(states), np.array(controls)
 
 
 def run_ppo_goal(model, eval_env, goal_wheel_angle, max_steps=2000):
+    """Run goal-conditioned PPO to reach target wheel angle."""
 
     simulator.state      = np.zeros(4, dtype=np.float32)
     simulator.time       = 0.0
     simulator.step_count = 0
 
-    logger = Logger()
+    times    = []
+    states   = []
+    controls = []
 
     for i in range(max_steps):
 
         t     = simulator.time
         state = simulator.get_state()
 
-        # build goal-conditioned obs
         obs_with_goal = np.append(state, goal_wheel_angle).astype(np.float32)
         obs_norm      = eval_env.normalize_obs(obs_with_goal.reshape(1, -1))
 
         action, _ = model.predict(obs_norm, deterministic=True)
         u         = float(np.asarray(action).squeeze())
 
-        # use simulator.step() — same as LQR
         next_state, reward, done, trunc, _ = simulator.step(u)
 
-        logger.log(t=t, true_state=next_state, control=u)
+        times.append(t)
+        states.append(next_state.copy())
+        controls.append(u)
 
         if RENDER_EVERY != -1 and i % RENDER_EVERY == 0:
             simulator.render()
@@ -282,7 +270,8 @@ def run_ppo_goal(model, eval_env, goal_wheel_angle, max_steps=2000):
         if done or trunc:
             break
 
-    return logger
+    return np.array(times), np.array(states), np.array(controls)
+
 
 # ============================================================
 # Plotting
@@ -296,34 +285,33 @@ STATE_LABELS = [
 ]
 
 
-def plot_drag_race(lqr_log, ppo_log, goal, filename):
+def plot_drag_race(lqr_times, lqr_states, lqr_controls,
+                   ppo_times, ppo_states, ppo_controls,
+                   goal, filename):
     """Plot LQR vs goal-conditioned PPO for drag race."""
 
-    lqr_log.to_arrays()
-    ppo_log.to_arrays()
-    lqr_position  = lqr_log.true_states[:, 0]  * simulator.wheel_radius
-    ppo_position  = ppo_log.true_states[:, 0]  * simulator.wheel_radius
+    lqr_position  = lqr_states[:, 0] * simulator.wheel_radius
+    ppo_position  = ppo_states[:, 0] * simulator.wheel_radius
     goal_position = goal * simulator.wheel_radius
-
 
     fig, axes = plt.subplots(2, 3, figsize=(15, 7))
     fig.suptitle(
         f"Drag Race: Drive to wheel angle = {goal:.2f} rad "
-        f"({goal * simulator.wheel_radius:.3f} m)",
+        f"({goal_position:.3f} m)",
         fontsize=12, fontweight='bold'
     )
 
+    # state plots
     for idx in range(4):
         row = idx // 2
         col = idx  % 2
         ax  = axes[row, col]
 
-        ax.plot(lqr_log.times, lqr_log.true_states[:, idx],
+        ax.plot(lqr_times, lqr_states[:, idx],
                 'b-', linewidth=1.5, label="LQR")
-        ax.plot(ppo_log.times, ppo_log.true_states[:, idx],
+        ax.plot(ppo_times, ppo_states[:, idx],
                 'r--', linewidth=1.5, label="PPO Goal")
 
-        # mark goal on wheel angle plot
         if idx == 0:
             ax.axhline(goal, color='g', linestyle=':', linewidth=1.5,
                        label=f'goal = {goal:.2f}')
@@ -334,28 +322,12 @@ def plot_drag_race(lqr_log, ppo_log, goal, filename):
         ax.grid(True, alpha=0.3)
         ax.axhline(0, color='k', linewidth=0.6, linestyle='--')
 
-    # position plot
-    ax_pos = axes[1, 2]
-    ax_pos.plot(lqr_log.times, lqr_position, 'b-', linewidth=1.5, label="LQR")
-    ax_pos.plot(ppo_log.times, ppo_position, 'r--', linewidth=1.5, label="PPO Goal")
-    ax_pos.axhline(goal_position, color='g', linestyle=':', linewidth=1.5,
-                label=f'goal = {goal_position:.3f} m')
-    ax_pos.set_ylabel("Position (m)")
-    ax_pos.set_xlabel("Time (s)")
-    ax_pos.set_title("Position")
-    ax_pos.legend(fontsize=8)
-    ax_pos.grid(True, alpha=0.3)
-    ax_pos.axhline(0, color='k', linewidth=0.6, linestyle='--')
-    
     # torque plot
     ax_t = axes[0, 2]
-    if len(lqr_log.controls) > 0:
-        ax_t.plot(lqr_log.times[:len(lqr_log.controls)],
-                  lqr_log.controls, 'b-', linewidth=1.5, label="LQR")
-    if len(ppo_log.controls) > 0:
-        ax_t.plot(ppo_log.times[:len(ppo_log.controls)],
-                  ppo_log.controls, 'r--', linewidth=1.5, label="PPO Goal")
-
+    ax_t.plot(lqr_times[:len(lqr_controls)], lqr_controls,
+              'b-', linewidth=1.5, label="LQR")
+    ax_t.plot(ppo_times[:len(ppo_controls)], ppo_controls,
+              'r--', linewidth=1.5, label="PPO Goal")
     ax_t.axhline( simulator.max_torque, color='k',
                   linestyle=':', linewidth=1, label='limit')
     ax_t.axhline(-simulator.max_torque, color='k',
@@ -366,6 +338,18 @@ def plot_drag_race(lqr_log, ppo_log, goal, filename):
     ax_t.legend(fontsize=8)
     ax_t.grid(True, alpha=0.3)
 
+    # position plot
+    ax_pos = axes[1, 2]
+    ax_pos.plot(lqr_times, lqr_position, 'b-', linewidth=1.5, label="LQR")
+    ax_pos.plot(ppo_times, ppo_position, 'r--', linewidth=1.5, label="PPO Goal")
+    ax_pos.axhline(goal_position, color='g', linestyle=':', linewidth=1.5,
+                   label=f'goal = {goal_position:.3f} m')
+    ax_pos.set_ylabel("Position (m)")
+    ax_pos.set_xlabel("Time (s)")
+    ax_pos.set_title("Position")
+    ax_pos.legend(fontsize=8)
+    ax_pos.grid(True, alpha=0.3)
+    ax_pos.axhline(0, color='k', linewidth=0.6, linestyle='--')
 
     plt.tight_layout()
     plt.savefig(filename, dpi=150, bbox_inches='tight')
@@ -381,11 +365,10 @@ def main():
 
     model, eval_env = get_model()
 
-    # test goals
     goals = [
         (1.0,  "part4_goal_1rad.png"),
         (2.0,  "part4_goal_2rad.png"),
-        (-1.5, "part4_goal_neg1.5rad.png"),
+        (-1.5, "part4_goal_neg1_5rad.png"),
     ]
 
     for goal_wheel_angle, filename in goals:
@@ -394,12 +377,18 @@ def main():
               f"({goal_wheel_angle * simulator.wheel_radius:.3f} m)")
 
         print("  Running LQR...")
-        lqr_log = run_lqr(goal_wheel_angle)
+        lqr_times, lqr_states, lqr_controls = run_lqr(goal_wheel_angle)
 
         print("  Running goal-conditioned PPO...")
-        ppo_log = run_ppo_goal(model, eval_env, goal_wheel_angle)
+        ppo_times, ppo_states, ppo_controls = run_ppo_goal(
+            model, eval_env, goal_wheel_angle
+        )
 
-        plot_drag_race(lqr_log, ppo_log, goal_wheel_angle, filename)
+        plot_drag_race(
+            lqr_times, lqr_states, lqr_controls,
+            ppo_times, ppo_states, ppo_controls,
+            goal_wheel_angle, filename
+        )
 
     plt.show()
     print("\nDone.")
