@@ -20,7 +20,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from utils.simulator import TWIPEnv
 from utils.lqr import LQRController
-from utils.sense import KalmanFilter
+from utils.kalman import KalmanFilter
 
 # ============================================================
 # Config
