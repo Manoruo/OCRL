@@ -383,67 +383,106 @@ class TWIPEnv(gym.Env):
             body_angular_velocity,
         ) = self.state
 
-        axle_x = 0.0
-        axle_y = self.wheel_radius
-        body_length = self.body_com_length
+        R    = self.wheel_radius
+        body_visual_length = 2 * self.body_com_length # full visual height of body (not just COM length)
+        view_half_width    = 0.35   # half-width of camera window in meters
 
-        tip_x = axle_x + body_length * np.sin(body_angle)
-        tip_y = axle_y + body_length * np.cos(body_angle)
+        # Wheel center position — robot rolls along ground
+        axle_x = wheel_angle * R    # arc length = angle * radius
+        axle_y = R
 
+        # Body tip position
+        tip_x = axle_x + body_visual_length * np.sin(body_angle)
+        tip_y = axle_y + body_visual_length * np.cos(body_angle)
+
+        # Spoke endpoints (shows wheel spinning)
+        spoke_x = [axle_x + R * np.cos(wheel_angle),
+                   axle_x - R * np.cos(wheel_angle)]
+        spoke_y = [axle_y + R * np.sin(wheel_angle),
+                   axle_y - R * np.sin(wheel_angle)]
+
+        # ---- First call: build figure ----
         if not hasattr(self, "_fig"):
             plt.ion()
-            self._fig, self._ax = plt.subplots()
-
-            # ADDED: title
+            self._fig, self._ax = plt.subplots(figsize=(8, 5))
             self._ax.set_title("Two-Wheeled Inverted Pendulum")
-
-            self._ax.set_xlim(-0.3, 0.3)
-            self._ax.set_ylim(0.0, 0.4)
+            self._ax.set_ylim(-0.05, 0.35)
             self._ax.set_aspect("equal")
 
-            # Ground
-            self._ax.plot([-1, 1], [0, 0], "k", linewidth=2)
-
-            # Wheel
-            self._wheel = plt.Circle(
-                (axle_x, axle_y),
-                self.wheel_radius,
-                fill=False,
+            # Ground line (wide so robot can roll)
+            self._ground, = self._ax.plot(
+                [-10, 10], [0, 0], "k-", linewidth=2
             )
-            self._ax.add_patch(self._wheel)
 
-            # Axle
-            self._ax.plot(axle_x, axle_y, "ko", markersize=6)
+            # Wheel circle
+            self._wheel_patch = plt.Circle(
+                (axle_x, axle_y), R, fill=False, color="steelblue", linewidth=2
+            )
+            self._ax.add_patch(self._wheel_patch)
 
-            # Upright goal (dotted)
+            # Wheel spoke (shows rotation)
+            self._spoke, = self._ax.plot(
+                spoke_x, spoke_y, "steelblue", linewidth=1.5
+            )
+
+            # Axle dot
+            self._axle_dot, = self._ax.plot(
+                axle_x, axle_y, "ko", markersize=5
+            )
+
+            # Upright reference (dotted)
             self._upright, = self._ax.plot(
                 [axle_x, axle_x],
-                [axle_y, axle_y + body_length],
-                "k--",
-                alpha=0.4,
+                [axle_y, axle_y + body_visual_length],
+                "k--", alpha=0.3, linewidth=1
             )
 
             # Body
             self._body, = self._ax.plot(
                 [axle_x, tip_x],
                 [axle_y, tip_y],
-                "r-",
-                linewidth=3,
+                "r-", linewidth=4
             )
 
-            # ADDED: timer text (elapsed / total)
+            # Body tip dot
+            self._tip_dot, = self._ax.plot(
+                tip_x, tip_y, "ro", markersize=7
+            )
+
+            # State text
             self._time_text = self._ax.text(
-                0.02, 0.95, "",
+                0.02, 0.97, "",
                 transform=self._ax.transAxes,
-                fontsize=10,
+                fontsize=9,
                 verticalalignment="top",
+                family="monospace"
             )
 
-        self._body.set_data([axle_x, tip_x], [axle_y, tip_y])
+        # ---- Every call: update positions ----
 
-        # ADDED: update timer text
+        # Camera follows robot
+        self._ax.set_xlim(axle_x - view_half_width, axle_x + view_half_width)
+
+        # Wheel
+        self._wheel_patch.center = (axle_x, axle_y)
+        self._spoke.set_data(spoke_x, spoke_y)
+        self._axle_dot.set_data([axle_x], [axle_y])
+
+        # Body
+        self._body.set_data([axle_x, tip_x], [axle_y, tip_y])
+        self._tip_dot.set_data([tip_x], [tip_y])
+
+        # Upright reference follows robot
+        self._upright.set_data(
+            [axle_x, axle_x],
+            [axle_y, axle_y + body_visual_length]
+        )
+
+        # Info text
         self._time_text.set_text(
-            f"t = {self.time:.2f} / {self.max_ep_len:.2f} s"
+            f"t={self.time:.2f}/{self.max_ep_len:.1f}s  "
+            f"body={np.degrees(body_angle):+.1f}°  "
+            f"wheel={wheel_angle:.2f}rad"
         )
 
         self._fig.canvas.draw()

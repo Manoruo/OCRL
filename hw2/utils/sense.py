@@ -2,55 +2,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-class Sensor:
-
-    @staticmethod
-    def get_measurement(state, gravity, noise_std=0.01):
-        """
-        Returns measurement vector y for the homework.
-
-        State =
-        [
-            wheel_angle,
-            wheel_angular_velocity,
-            body_angle,
-            body_angular_velocity
-        ]
-
-        Measurement =
-        [
-            wheel_encoder,
-            accelerometer_signal,
-            gyro
-        ]
-
-        We model accelerometer_signal as a body-angle estimate:
-            ax = g * sin(body_angle)
-            az = g * cos(body_angle)
-            body_angle_from_accelerometer = atan2(ax, az)
-        """
-
-        wheel_angle = state[0]
-        body_angle = state[2]
-        body_angular_velocity = state[3]
-
-        # accelerometer signals in body frame
-        ax = gravity * np.sin(body_angle)
-        az = gravity * np.cos(body_angle)
-
-        # accelerometer-derived body angle measurement
-        body_angle_from_accelerometer = np.arctan2(ax, az)
-
-        measurement = np.array([
-            wheel_angle,
-            body_angle_from_accelerometer,
-            body_angular_velocity
-        ], dtype=float)
-
-        noise = np.random.normal(0, noise_std, size=3)
-
-        return measurement + noise
-
 class KalmanFilter:
     """
     Kalman Filter for estimating the TWIP state.
